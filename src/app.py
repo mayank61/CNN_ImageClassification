@@ -9,6 +9,7 @@ from mlflow import pytorch
 import numpy as np
 import pandas as pd
 import dagshub
+from mlflow.models import infer_signature
 from tqdm import tqdm
 def get_data_loaders(batch_size=64, num_workers=4):
     transform = transforms.ToTensor()
@@ -50,19 +51,25 @@ if __name__ == "__main__":
         break  # Just to demonstrate the output for one batch
     model= ConvolutionalNetwork()
     print(model)
+    with open("model_summary.txt", "w") as f:
+        f.write(str(model))
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     total_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     dagshub.init(repo_owner='mayank61', repo_name='mlfow_CNN_ImageClassification', mlflow=True)
-
+    input_data = torch.randn(1, 1, 28, 28)  # Example input for signature inference
+    output_data = model(input_data)  # Forward pass to get output
+    signature = infer_signature(input_data, output_data)
     mlflow.set_experiment('MNIST_Convolutional_Network')
     with mlflow.start_run():
         mlflow.log_param('batch_size', 64)
         mlflow.log_param('learning_rate', 0.001)
         mlflow.log_param('total_parameters', total_parameters)
         mlflow.log_param('model_architecture', 'ConvolutionalNetwork')
-        
+        best_val_loss = float('inf')
+        mlflow.log_artifact('model_summary.txt')
+        mlflow.pytorch.log_model(model, "model", signature=signature)
         for epoch in tqdm(range(10)):
             training_loss = 0
             for images, labels in train_loader:
@@ -84,8 +91,11 @@ if __name__ == "__main__":
                     pred = outputs.argmax(dim=1, keepdim=True)
                     correct += pred.eq(labels.view_as(pred)).sum().item()
                 test_loss /= len(test_loader)
+                if test_loss < best_val_loss:
+                    best_val_loss = test_loss
+                    torch.save(model.state_dict(), 'best_model.pth')
                 accuracy = correct / len(test_loader.dataset)
                 mlflow.log_metric('test_loss', test_loss, step=epoch)
                 mlflow.log_metric('accuracy', accuracy, step=epoch)
-        mlflow.pytorch.log_model(model, "final_model")
-        mlflow.log_artifact("model_summary.txt", artifact_path="model_summary")
+        
+        
